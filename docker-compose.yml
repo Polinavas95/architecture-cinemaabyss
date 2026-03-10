@@ -22,7 +22,7 @@ services:
     networks:
       - cinemaabyss-network
 
-  # ZooKeeper for Kafka
+#  # ZooKeeper for Kafka
   zookeeper:
     image: wurstmeister/zookeeper:latest
     container_name: cinemaabyss-zookeeper
@@ -31,7 +31,7 @@ services:
     networks:
       - cinemaabyss-network
 
-  # Kafka
+#  # Kafka
   kafka:
     image: wurstmeister/kafka:2.13-2.7.0
     container_name: cinemaabyss-kafka
@@ -83,32 +83,32 @@ services:
       - cinemaabyss-network
 
 #  # Events Microservice
-#  events-service:
-#    build:
-#      context: ./src/microservices/events
-#      dockerfile: Dockerfile
-#    container_name: cinemaabyss-events-service
-#    depends_on:
-#      - postgres
-#      - kafka
-#    ports:
-#      - "8082:8082"
-#    environment:
-#      PORT: 8082
-#      KAFKA_BROKERS: kafka:9092
-#    networks:
-#      - cinemaabyss-network
+  events-service:
+    build:
+      context: ./src/microservices
+      dockerfile: Dockerfile-events
+    container_name: cinemaabyss-events-service
+    depends_on:
+      - postgres
+      - kafka
+    ports:
+      - "8082:8082"
+    environment:
+      PORT: 8082
+      KAFKA_BROKERS: kafka:9092
+    networks:
+      - cinemaabyss-network
 
   # Proxy Service (API Gateway)
   proxy-service:
     build:
-      context: ./src/microservices/proxy
-      dockerfile: Dockerfile
+      context: ./src/microservices
+      dockerfile: Dockerfile-proxy
     container_name: cinemaabyss-proxy-service
     depends_on:
       - monolith
       - movies-service
-#      - events-service
+      - events-service
     ports:
       - "8000:8000"
     env_file:
@@ -116,7 +116,7 @@ services:
     networks:
       - cinemaabyss-network
 
-  # Kafka UI for monitoring Kafka
+#  # Kafka UI for monitoring Kafka
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
     container_name: cinemaabyss-kafka-ui

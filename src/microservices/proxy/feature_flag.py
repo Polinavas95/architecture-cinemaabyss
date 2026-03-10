@@ -1,8 +1,8 @@
 import random
 from typing import Any
 
-from microservices.proxy.config import settings
-from microservices.proxy.enums import Flags
+from config import settings
+from enums import Flags
 
 
 class FeatureFlagManager:

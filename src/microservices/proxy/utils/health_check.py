@@ -3,7 +3,7 @@ import httpx
 import asyncio
 import logging
 
-from microservices.proxy.config import settings
+from config import settings
 
 logger = logging.getLogger(__name__)
 

@@ -19,7 +19,7 @@
   proxy-service:
     build:
       context: ./src/microservices/proxy
-      dockerfile: Dockerfile
+      dockerfile: Dockerfile-proxy-events
     container_name: cinemaabyss-proxy-service
     depends_on:
       - monolith

@@ -3,11 +3,11 @@ from typing import Any
 
 from fastapi import Request
 
-from microservices.proxy.clients.events import events_client
-from microservices.proxy.clients.monolith import monolith_client
-from microservices.proxy.clients.movies import movies_client
-from microservices.proxy.enums import AppClient, Flags
-from microservices.proxy.feature_flag import feature_flags
+from clients.events import events_client
+from clients.monolith import monolith_client
+from clients.movies import movies_client
+from enums import AppClient, Flags
+from feature_flag import feature_flags
 
 logger = logging.getLogger(__name__)
 

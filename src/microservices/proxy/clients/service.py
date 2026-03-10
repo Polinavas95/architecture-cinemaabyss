@@ -2,7 +2,7 @@ import httpx
 from typing import Any
 import logging
 
-from microservices.proxy.config import settings
+from config import settings
 
 logger = logging.getLogger(__name__)
 

@@ -1,5 +1,5 @@
-from microservices.proxy.clients.service import ServiceClient
-from microservices.proxy.config import settings
+from clients.service import ServiceClient
+from config import settings
 
 
 class MoviesServiceClient(ServiceClient):

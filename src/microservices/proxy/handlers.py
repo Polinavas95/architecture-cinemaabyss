@@ -1,7 +1,7 @@
 from fastapi import Request, Response
 import logging
 
-from microservices.proxy.router import proxy_router
+from router import proxy_router
 
 logger = logging.getLogger(__name__)
 

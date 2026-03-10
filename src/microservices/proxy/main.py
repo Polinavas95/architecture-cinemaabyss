@@ -7,11 +7,11 @@ from fastapi.responses import JSONResponse, PlainTextResponse
 from fastapi.middleware.cors import CORSMiddleware
 import logging
 
-from microservices.proxy.config import settings
-from microservices.proxy.feature_flag import feature_flags
-from microservices.proxy.handlers import handle_request
-from microservices.proxy.middlewares import RequestLoggingMiddleware
-from microservices.proxy.utils.health_check import check_all_services
+from config import settings
+from feature_flag import feature_flags
+from handlers import handle_request
+from middlewares import RequestLoggingMiddleware
+from utils.health_check import check_all_services
 
 logging.basicConfig(
     level=logging.INFO,
