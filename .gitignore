@@ -70,7 +70,7 @@ out/
 target/
 .gradle/
 
-# Node.js (for frontend or Node.js services)
+# Node.js (for frontend or Node.js clients)
 node_modules/
 npm-debug.log
 yarn-error.log
