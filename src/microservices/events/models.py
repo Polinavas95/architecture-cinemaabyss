@@ -1,5 +1,5 @@
 from pydantic import BaseModel, Field
-from datetime import datetime
+from datetime import datetime, timezone
 import uuid
 
 
@@ -7,7 +7,7 @@ class Event(BaseModel):
     """Базовая модель события"""
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     type: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     payload: dict
 
 

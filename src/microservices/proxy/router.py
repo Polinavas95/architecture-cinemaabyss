@@ -20,9 +20,9 @@ class ProxyRouter:
 
     def __init__(self):
         self.services = {
-            AppClient.monolith.value: monolith_client,
-            AppClient.movies.value: movies_client,
-            AppClient.events.value: events_client
+            "monolith": monolith_client,
+            "movies": movies_client,
+            "events": events_client,
         }
 
     async def route_request(
@@ -120,7 +120,7 @@ class ProxyRouter:
                 "POST": await client.post(path, json_data=body, headers=headers),
                 "PUT": await client.put(path, json_data=body, headers=headers),
                 "DELETE": await client.delete(path, params=params, headers=headers),
-            }.get(method, await client.request(method, path, params=params, json_data=body, headers=headers))
+            }[method]
         except Exception as e:
             logger.error(f"Error executing request to {service_name}: {str(e)}")
             return {

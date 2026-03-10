@@ -151,11 +151,6 @@ async def get_users_proxy(request: Request):
     return await handle_request(request)
 
 
-@app.post("/api/movies")
-async def create_movie_proxy(request: Request):
-    return await handle_request(request)
-
-
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
 async def proxy(request: Request, path: str):
     """

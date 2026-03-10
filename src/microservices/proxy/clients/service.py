@@ -18,16 +18,11 @@ class ServiceClient:
         self.timeout = settings.request_timeout
         self.client = httpx.AsyncClient(timeout=self.timeout)
 
-    # clients/service.py
-
     async def request(self, method: str, url: str, **kwargs) -> dict[str, Any]:
         try:
             response = await self.client.request(method, url, **kwargs)
-
-            # Проверяем, есть ли тело ответа и является ли оно JSON
-            content_type = response.headers.get('content-type', '')
+            content_type = response.headers.get("content-type", "")
             if response.status_code == 405 or response.status_code >= 400:
-                # Для ошибок может не быть JSON тела
                 if response.status_code == 405 and not response.content:
                     return {
                         "status_code": response.status_code,
@@ -38,7 +33,6 @@ class ServiceClient:
                 try:
                     return response.json()
                 except JSONDecodeError:
-                    # Логируем предупреждение и возвращаем текст
                     logger.warning(f"Invalid JSON response from {url}: {response.text[:200]}")
                     return {
                         "status_code": response.status_code,
@@ -47,7 +41,7 @@ class ServiceClient:
             else:
                 return {
                     "status_code": response.status_code,
-                    "content": response.content.decode('utf-8', errors='ignore') if response.content else None
+                    "content": response.content.decode("utf-8", errors="ignore") if response.content else None
                 }
 
         except Exception as e:
@@ -55,13 +49,37 @@ class ServiceClient:
             raise
 
     async def get(self, path: str, params: dict | None = None, headers: dict | None = None):
-        return await self.request("GET", path, params=params, headers=headers)
+        """GET запрос"""
+        url = self._build_url(path)
+        logger.info(f"GET {url}")
+        return await self.request("GET", url, params=params, headers=headers)
 
     async def post(self, path: str, json_data: dict | None = None, headers: dict | None = None):
-        return await self.request("POST", path, json_data=json_data, headers=headers)
+        """POST запрос с JSON телом"""
+        url = self._build_url(path)
+        logger.info(f"POST {url}")
+        # ВАЖНО: используем параметр 'json', а не 'json_data'
+        return await self.request("POST", url, json=json_data, headers=headers)
 
     async def put(self, path: str, json_data: dict | None = None, headers: dict | None = None):
-        return await self.request("PUT", path, json_data=json_data, headers=headers)
+        """PUT запрос с JSON телом"""
+        url = self._build_url(path)
+        logger.info(f"PUT {url}")
+        # ВАЖНО: используем параметр 'json', а не 'json_data'
+        return await self.request("PUT", url, json=json_data, headers=headers)
 
-    async def delete(self, path: str, params: dict | None = None, headers: dict | None = None):
-        return await self.request("DELETE", path, params=params, headers=headers)
+    async def delete(self, path: str, params: dict | None, headers: dict | None = None):
+        """DELETE запрос"""
+        url = self._build_url(path)
+        logger.info(f"DELETE {url}")
+        return await self.request("DELETE", url, params=params, headers=headers)
+
+    async def patch(self, path: str, json_data: dict | None, headers: dict | None = None):
+        """PATCH запрос с JSON телом"""
+        url = self._build_url(path)
+        logger.info(f"PATCH {url}")
+        return await self.request("PATCH", url, json=json_data, headers=headers)
+    def _build_url(self, path: str) -> str:
+        if not path.startswith("/"):
+            path = f"/{path}"
+        return f"{self.base_url}{path}"
