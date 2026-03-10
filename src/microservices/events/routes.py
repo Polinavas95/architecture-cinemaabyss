@@ -1,9 +1,11 @@
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, HTTPException, status
 import logging
 
 from models import (
     MovieEvent, UserEvent, PaymentEvent,
-    EventResponse, Error
+    EventResponse, Error, EventMovieResponse
 )
 from kafka.producer import kafka_producer
 from config import settings
@@ -26,16 +28,17 @@ async def create_movie_event(event: MovieEvent):
     try:
         partition, offset = await kafka_producer.create_movie_event(event)
 
-        return EventResponse(
+        return EventMovieResponse(
             status="success",
             partition=partition,
             offset=offset,
             event={
                 "id": f"movie-{event.movie_id}-{event.action}",
                 "type": "movie",
-                "timestamp": event.timestamp if hasattr(event, 'timestamp') else None,
-                "payload": event.dict(exclude_none=True)
-            }
+                "timestamp": event.timestamp,
+                "payload": event.model_dump()
+            },
+            timestamp=event.timestamp,
         )
     except Exception as e:
         logger.error(f"Failed to create movie event: {str(e)}")

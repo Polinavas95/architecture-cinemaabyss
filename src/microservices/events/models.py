@@ -20,6 +20,7 @@ class MovieEvent(BaseModel):
     rating: float | None = None
     genres: list[str] | None = None
     description: str | None = None
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
 class UserEvent(BaseModel):
@@ -47,6 +48,10 @@ class EventResponse(BaseModel):
     partition: int
     offset: int
     event: Event
+
+
+class EventMovieResponse(EventResponse):
+    timestamp: datetime
 
 
 class Error(BaseModel):
