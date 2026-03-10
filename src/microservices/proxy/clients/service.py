@@ -1,3 +1,5 @@
+from json import JSONDecodeError
+
 import httpx
 from typing import Any
 import logging
@@ -14,66 +16,43 @@ class ServiceClient:
         self.base_url = base_url.rstrip("/")
         self.service_name = service_name
         self.timeout = settings.request_timeout
+        self.client = httpx.AsyncClient(timeout=self.timeout)
 
-    async def request(
-            self,
-            method: str,
-            path: str,
-            params: dict | None = None,
-            json_data: dict | None = None,
-            headers: dict | None = None
-    ) -> dict[str, Any]:
-        """
-        Выполняет HTTP запрос к сервису
-        """
-        url = f"{self.base_url}{path}"
+    # clients/service.py
 
-        # Подготавливаем заголовки
-        request_headers = headers or {}
-        request_headers["X-Service-Name"] = self.service_name
-        request_headers["X-Proxy-Version"] = "1.0"
-
-        logger.info(f"ServiceClient: {method} {url}")
-
+    async def request(self, method: str, url: str, **kwargs) -> dict[str, Any]:
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) as client:
-                response = await client.request(
-                    method=method,
-                    url=url,
-                    params=params,
-                    json=json_data,
-                    headers=request_headers,
-                    follow_redirects=True
-                )
-                try:
-                    response_data = response.json()
-                except Exception as e:
-                    logger.exception(f"Caught an error: '{e}'")
-                    response_data = {"content": response.text}
+            response = await self.client.request(method, url, **kwargs)
 
+            # Проверяем, есть ли тело ответа и является ли оно JSON
+            content_type = response.headers.get('content-type', '')
+            if response.status_code == 405 or response.status_code >= 400:
+                # Для ошибок может не быть JSON тела
+                if response.status_code == 405 and not response.content:
+                    return {
+                        "status_code": response.status_code,
+                        "error": f"Method {method} not allowed",
+                        "detail": response.reason_phrase
+                    }
+            if response.content and 'application/json' in content_type:
+                try:
+                    return response.json()
+                except JSONDecodeError:
+                    # Логируем предупреждение и возвращаем текст
+                    logger.warning(f"Invalid JSON response from {url}: {response.text[:200]}")
+                    return {
+                        "status_code": response.status_code,
+                        "text": response.text
+                    }
+            else:
                 return {
                     "status_code": response.status_code,
-                    "data": response_data,
-                    "headers": dict(response.headers),
-                    "service": self.service_name
+                    "content": response.content.decode('utf-8', errors='ignore') if response.content else None
                 }
 
-        except httpx.TimeoutException:
-            logger.error(f"Timeout error calling {self.service_name} at {url}")
-            return {
-                "status_code": 504,
-                "data": {"error": f"Gateway Timeout: {self.service_name} not responding"},
-                "service": self.service_name,
-                "error": "timeout"
-            }
         except Exception as e:
-            logger.error(f"Unexpected error calling {self.service_name}: {str(e)}")
-            return {
-                "status_code": 500,
-                "data": {"error": f"Internal Server Error: {str(e)}"},
-                "service": self.service_name,
-                "error": "unexpected_error"
-            }
+            logger.error(f"Caught an error: {e}", exc_info=True)
+            raise
 
     async def get(self, path: str, params: dict | None = None, headers: dict | None = None):
         return await self.request("GET", path, params=params, headers=headers)

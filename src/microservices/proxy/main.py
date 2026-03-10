@@ -54,10 +54,32 @@ app.add_middleware(MetricsMiddleware)
 app.add_route("/metrics", metrics)
 
 
-@app.get("/health", response_class=PlainTextResponse)
+@app.get("/health")
 async def health_check():
-    return "Strangler Fig Proxy is healthy"
+    return {
+        "status": "healthy",
+        "service": "proxy",
+        "version": "1.0.0"
+    }
 
+@app.get("/health/monolith")
+async def monolith_health():
+    """Проверка доступности монолита"""
+    try:
+        from router.proxy_router import proxy_router
+        import httpx
+
+        response = await proxy_router.client.get("http://monolith:8080/health")
+        return {
+            "status": "healthy" if response.status_code < 500 else "unhealthy",
+            "monolith_status": response.status_code,
+            "response": response.json() if response.content else {}
+        }
+    except Exception as e:
+        return {
+            "status": "unhealthy",
+            "error": str(e)
+        }
 
 @app.get("/health/detailed")
 async def detailed_health_check():
@@ -118,6 +140,20 @@ async def get_migration_status():
         "movies_service_url": settings.movies_service_url,
         "events_service_url": settings.events_service_url
     })
+
+@app.get("/api/movies")
+async def get_movies_proxy(request: Request):
+    return await handle_request(request)
+
+
+@app.get("/api/users")
+async def get_users_proxy(request: Request):
+    return await handle_request(request)
+
+
+@app.post("/api/movies")
+async def create_movie_proxy(request: Request):
+    return await handle_request(request)
 
 
 @app.api_route("/{path:path}", methods=["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"])
