@@ -110,7 +110,7 @@ jobs:
 
       - name: Build and start Events Service
         run: |
-          docker build -t events-service:test ./src/microservices/events -f ./src/microservices/Dockerfile-events
+          docker build -t events-service:test -f ./src/microservices/Dockerfile-events ./src/microservices
           docker run -d --name events-service-test \
             --network cinemaabyss-network \
             -e PORT=8082 \
@@ -120,7 +120,7 @@ jobs:
 
       - name: Build and start Proxy Service
         run: |
-          docker build -t proxy-service:test ./src/microservices/proxy -f ./src/microservices/Dockerfile-proxy
+          docker build -t proxy-service:test ./src/microservices -f ./src/microservices/Dockerfile-proxy
           docker run -d --name proxy-service-test \
             --network cinemaabyss-network \
             --env-file .env \
