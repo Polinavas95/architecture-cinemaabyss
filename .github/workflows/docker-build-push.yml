@@ -140,6 +140,20 @@ jobs:
           
           echo "All services are ready!"
 
+      - name: Debug network connectivity
+        run: |
+          echo "=== Testing DNS resolution ==="
+          docker run --rm --network=cinemaabyss-network alpine nslookup monolith-test || true
+          docker run --rm --network=cinemaabyss-network alpine nslookup movies-service-test || true
+          docker run --rm --network=cinemaabyss-network alpine nslookup events-service-test || true
+          docker run --rm --network=cinemaabyss-network alpine nslookup proxy-service-test || true
+          
+          echo "=== Testing HTTP connectivity ==="
+          docker run --rm --network=cinemaabyss-network curlimages/curl curl -v http://monolith-test:8080/health || true
+          docker run --rm --network=cinemaabyss-network curlimages/curl curl -v http://movies-service-test:8081/health || true
+          docker run --rm --network=cinemaabyss-network curlimages/curl curl -v http://events-service-test:8082/health || true
+          docker run --rm --network=cinemaabyss-network curlimages/curl curl -v http://proxy-service-test:8000/health || true
+
       - name: Run Postman tests in Docker
         run: |
           cd tests/postman
