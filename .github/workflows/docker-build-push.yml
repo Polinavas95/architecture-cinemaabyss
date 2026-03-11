@@ -110,7 +110,7 @@ jobs:
 
       - name: Build and start Events Service
         run: |
-          docker build -t events-service:test ./src/microservices/events -f ./src/microservices/events/Dockerfile-events
+          docker build -t events-service:test ./src/microservices/events -f ./src/microservices/Dockerfile-events
           docker run -d --name events-service-test \
             --network cinemaabyss-network \
             -e PORT=8082 \
@@ -120,7 +120,7 @@ jobs:
 
       - name: Build and start Proxy Service
         run: |
-          docker build -t proxy-service:test ./src/microservices/proxy -f ./src/microservices/proxy/Dockerfile-proxy
+          docker build -t proxy-service:test ./src/microservices/proxy -f ./src/microservices/Dockerfile-proxy
           docker run -d --name proxy-service-test \
             --network cinemaabyss-network \
             --env-file .env \
@@ -253,7 +253,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./src/microservices/events
-          file: ./src/microservices/events/Dockerfile-events
+          file: ./src/microservices/Dockerfile-events
           push: true
           tags: ${{ steps.meta-events.outputs.tags }}
           labels: ${{ steps.meta-events.outputs.labels }}
@@ -277,7 +277,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: ./src/microservices/proxy
-          file: ./src/microservices/proxy/Dockerfile-proxy
+          file: ./src/microservices/Dockerfile-proxy
           push: true
           tags: ${{ steps.meta-proxy.outputs.tags }}
           labels: ${{ steps.meta-proxy.outputs.labels }}
