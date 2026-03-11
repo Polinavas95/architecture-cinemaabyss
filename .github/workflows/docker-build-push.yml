@@ -6,6 +6,7 @@ on:
     branches: [ main ]
     paths:
       - 'src/**'
+      - 'tests/postman/**'
       - '.github/workflows/docker-build-push.yml'
   release:
     types: [published]
@@ -18,11 +19,137 @@ env:
   PROXY_SERVICE_IMAGE_NAME: ${{ github.repository }}/proxy-service
 
 jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:14
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres_password
+          POSTGRES_DB: cinemaabyss
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      zookeeper:
+        image: wurstmeister/zookeeper:latest
+        ports:
+          - 2181:2181
+
+      kafka:
+        image: wurstmeister/kafka:2.13-2.7.0
+        env:
+          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+          KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+          KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+          KAFKA_CREATE_TOPICS: "movie-events:1:1,user-events:1:1,payment-events:1:1"
+        ports:
+          - 9092:9092
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Build and start all services
+        run: |
+          # Создаем сеть для тестов
+          docker network create cinemaabyss-network || true
+          
+          # Собираем и запускаем монолит
+          docker build -t monolith:test ./src/monolith
+          docker run -d --name monolith-test \
+            --network cinemaabyss-network \
+            -e PORT=8080 \
+            -e DB_CONNECTION_STRING="postgres://postgres:postgres_password@postgres:5432/cinemaabyss?sslmode=disable" \
+            -p 8080:8080 \
+            monolith:test
+          
+          # Собираем и запускаем movies service
+          docker build -t movies-service:test ./src/microservices/movies
+          docker run -d --name movies-service-test \
+            --network cinemaabyss-network \
+            -e PORT=8081 \
+            -e DB_CONNECTION_STRING="postgres://postgres:postgres_password@postgres:5432/cinemaabyss?sslmode=disable" \
+            -p 8081:8081 \
+            movies-service:test
+          
+          # Собираем и запускаем events service
+          docker build -t events-service:test ./src/microservices/events -f ./src/microservices/Dockerfile-events
+          docker run -d --name events-service-test \
+            --network cinemaabyss-network \
+            -e PORT=8082 \
+            -e KAFKA_BROKERS="kafka:9092" \
+            -p 8082:8082 \
+            events-service:test
+          
+          # Собираем и запускаем proxy service
+          docker build -t proxy-service:test ./src/microservices/proxy -f ./src/microservices/Dockerfile-proxy
+          docker run -d --name proxy-service-test \
+            --network cinemaabyss-network \
+            -e PORT=8000 \
+            -e MONOLITH_URL="http://monolith-test:8080" \
+            -e MOVIES_SERVICE_URL="http://movies-service-test:8081" \
+            -e EVENTS_SERVICE_URL="http://events-service-test:8082" \
+            -e GRADUAL_MIGRATION="true" \
+            -e MOVIES_MIGRATION_PERCENT="50" \
+            -p 8000:8000 \
+            proxy-service:test
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for services to start..."
+          sleep 15
+          
+          # Проверяем health endpoints
+          timeout 60 bash -c 'until curl -s http://localhost:8080/health > /dev/null; do echo "Waiting for monolith..."; sleep 2; done'
+          timeout 60 bash -c 'until curl -s http://localhost:8081/health > /dev/null; do echo "Waiting for movies service..."; sleep 2; done'
+          timeout 60 bash -c 'until curl -s http://localhost:8082/health > /dev/null; do echo "Waiting for events service..."; sleep 2; done'
+          timeout 60 bash -c 'until curl -s http://localhost:8000/health > /dev/null; do echo "Waiting for proxy service..."; sleep 2; done'
+          
+          echo "All services are ready!"
+
+      - name: Run Postman tests in Docker
+        run: |
+          cd tests/postman
+          
+          # Собираем образ для тестов
+          docker build -t cinemaabyss-api-tests .
+          
+          # Запускаем тесты в Docker с использованием созданной сети
+          docker run --rm \
+            --network=cinemaabyss-network \
+            -e NODE_ENV=test \
+            cinemaabyss-api-tests \
+            --environment docker
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: test-reports
+          path: tests/postman/reports/
+
+      - name: Clean up test containers
+        if: always()
+        run: |
+          docker stop monolith-test movies-service-test events-service-test proxy-service-test || true
+          docker rm monolith-test movies-service-test events-service-test proxy-service-test || true
+
   build-and-push:
+    needs: test
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
+    if: success()
 
     steps:
       - name: Checkout repository
@@ -38,7 +165,8 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Monolith
+      # Monolith
+      - name: Extract metadata for Monolith
         id: meta-monolith
         uses: docker/metadata-action@v4
         with:
@@ -50,7 +178,7 @@ jobs:
             type=ref,event=branch
             latest
 
-      - name: Build and push Monolith Docker image
+      - name: Build and push Monolith
         uses: docker/build-push-action@v4
         with:
           context: ./src/monolith
@@ -60,7 +188,8 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      - name: Extract metadata (tags, labels) for Movies Service
+      # Movies Service
+      - name: Extract metadata for Movies Service
         id: meta-movies
         uses: docker/metadata-action@v4
         with:
@@ -72,7 +201,7 @@ jobs:
             type=ref,event=branch
             latest
 
-      - name: Build and push Movies Service Docker image
+      - name: Build and push Movies Service
         uses: docker/build-push-action@v4
         with:
           context: ./src/microservices/movies
@@ -82,4 +211,64 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-      
+      # Events Service
+      - name: Extract metadata for Events Service
+        id: meta-events
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.EVENTS_SERVICE_IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=ref,event=branch
+            latest
+
+      - name: Build and push Events Service
+        uses: docker/build-push-action@v4
+        with:
+          context: ./src/microservices/events
+          file: ./src/microservices/Dockerfile-events
+          push: true
+          tags: ${{ steps.meta-events.outputs.tags }}
+          labels: ${{ steps.meta-events.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      # Proxy Service
+      - name: Extract metadata for Proxy Service
+        id: meta-proxy
+        uses: docker/metadata-action@v4
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.PROXY_SERVICE_IMAGE_NAME }}
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=sha,format=short
+            type=ref,event=branch
+            latest
+
+      - name: Build and push Proxy Service
+        uses: docker/build-push-action@v4
+        with:
+          context: ./src/microservices/proxy
+          file: ./src/microservices/Dockerfile-proxy
+          push: true
+          tags: ${{ steps.meta-proxy.outputs.tags }}
+          labels: ${{ steps.meta-proxy.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  notify:
+    needs: build-and-push
+    runs-on: ubuntu-latest
+    if: success()
+    steps:
+      - name: Send notification
+        run: |
+          echo "✅ All services built and pushed successfully!"
+          echo "📦 Images published to GitHub Container Registry:"
+          echo "  - Monolith: ${{ env.MONOLITH_IMAGE_NAME }}"
+          echo "  - Movies Service: ${{ env.MOVIES_SERVICE_IMAGE_NAME }}"
+          echo "  - Events Service: ${{ env.EVENTS_SERVICE_IMAGE_NAME }}"
+          echo "  - Proxy Service: ${{ env.PROXY_SERVICE_IMAGE_NAME }}"
