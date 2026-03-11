@@ -216,13 +216,12 @@ jobs:
       - name: Run Postman tests
         run: |
           cd tests/postman
-          docker build -t cinemaabyss-api-tests .
-          
-          # Создаем временный environment файл с правильными именами
-          cat > test-env.json << EOF
+
+          # Обновляем docker.environment.json с правильными именами сервисов
+          cat > docker.environment.json << EOF
           {
-            "id": "test-env",
-            "name": "Test Environment",
+            "id": "docker-env",
+            "name": "Docker Environment",
             "values": [
               {"key": "baseUrl", "value": "http://monolith:8080", "enabled": true},
               {"key": "moviesServiceUrl", "value": "http://movies-service:8081", "enabled": true},
@@ -231,13 +230,16 @@ jobs:
             ]
           }
           EOF
-          
+
+          # Собираем образ для тестов
+          docker build -t cinemaabyss-api-tests .
+
+          # Запускаем тесты
           docker run --rm \
             --network=cinemaabyss-network \
             -v "$(pwd)/reports:/app/reports" \
-            -v "$(pwd)/test-env.json:/app/test-env.json" \
             cinemaabyss-api-tests \
-            --environment test-env
+            --environment docker
 
       - name: Upload test reports
         if: always()
