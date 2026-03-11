@@ -57,17 +57,14 @@ jobs:
 
       - name: Start PostgreSQL with schema initialization
         run: |
-          # Создаем временную директорию для init.sql
           mkdir -p ./docker-entrypoint-initdb.d/
           
-          # Проверяем наличие init.sql
           if [ -f ./src/database/init.sql ]; then
             echo "Found init.sql, copying..."
             cp ./src/database/init.sql ./docker-entrypoint-initdb.d/
           else
             echo "init.sql not found, creating default schema..."
             cat > ./docker-entrypoint-initdb.d/init.sql << 'EOF'
-            -- Users table
             CREATE TABLE IF NOT EXISTS users (
                 id SERIAL PRIMARY KEY,
                 username VARCHAR(255) NOT NULL UNIQUE,
@@ -75,7 +72,6 @@ jobs:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             
-            -- Movies table
             CREATE TABLE IF NOT EXISTS movies (
                 id SERIAL PRIMARY KEY,
                 title VARCHAR(255) NOT NULL,
@@ -85,7 +81,6 @@ jobs:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             
-            -- Payments table
             CREATE TABLE IF NOT EXISTS payments (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -94,7 +89,6 @@ jobs:
                 timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             
-            -- Subscriptions table
             CREATE TABLE IF NOT EXISTS subscriptions (
                 id SERIAL PRIMARY KEY,
                 user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -105,7 +99,6 @@ jobs:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             );
             
-            -- Insert sample data for testing
             INSERT INTO users (username, email) VALUES 
                 ('testuser1', 'test1@example.com'),
                 ('testuser2', 'test2@example.com')
@@ -118,8 +111,7 @@ jobs:
           EOF
           fi
           
-          # Запускаем PostgreSQL с монтированием init.sql
-          docker run -d --name postgres-test \
+          docker run -d --name postgres \
             --network cinemaabyss-network \
             -e POSTGRES_USER=postgres \
             -e POSTGRES_PASSWORD=postgres_password \
@@ -128,34 +120,22 @@ jobs:
             -p 5432:5432 \
             postgres:14
           
-          # Ждем готовности PostgreSQL
-          echo "Waiting for PostgreSQL to start..."
-          timeout 60 bash -c 'until docker exec postgres-test pg_isready -U postgres; do sleep 2; done'
-          
-          # Даем время на выполнение init.sql
+          timeout 60 bash -c 'until docker exec postgres pg_isready -U postgres; do sleep 2; done'
           sleep 5
-          
-          # Проверяем созданные таблицы
-          echo "Checking database tables:"
-          docker exec postgres-test psql -U postgres -d cinemaabyss -c "\dt"
-          
-          echo "PostgreSQL is ready with initialized schema"
-
+          echo "PostgreSQL is ready"
 
       - name: Start ZooKeeper and Kafka
         run: |
-          # ZooKeeper
-          docker run -d --name zookeeper-test \
+          docker run -d --name zookeeper \
             --network cinemaabyss-network \
             -p 2181:2181 \
             wurstmeister/zookeeper:latest
           
-          # Kafka
-          docker run -d --name kafka-test \
+          docker run -d --name kafka \
             --network cinemaabyss-network \
-            -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-test:9092 \
+            -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092 \
             -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092 \
-            -e KAFKA_ZOOKEEPER_CONNECT=zookeeper-test:2181 \
+            -e KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181 \
             -e KAFKA_CREATE_TOPICS="movie-events:1:1,user-events:1:1,payment-events:1:1" \
             -p 9092:9092 \
             wurstmeister/kafka:2.13-2.7.0
@@ -168,7 +148,7 @@ jobs:
           docker run -d --name monolith \
             --network cinemaabyss-network \
             -e PORT=8080 \
-            -e DB_CONNECTION_STRING="postgres://postgres:postgres_password@postgres-test:5432/cinemaabyss?sslmode=disable" \
+            -e DB_CONNECTION_STRING="postgres://postgres:postgres_password@postgres:5432/cinemaabyss?sslmode=disable" \
             -p 8080:8080 \
             monolith:test
           sleep 5
@@ -176,27 +156,27 @@ jobs:
       - name: Build and start Movies Service
         run: |
           docker build -t movies-service:test ./src/microservices/movies
-          docker run -d --name movies-service-test \
+          docker run -d --name movies-service \
             --network cinemaabyss-network \
             -e PORT=8081 \
-            -e DB_CONNECTION_STRING="postgres://postgres:postgres_password@postgres-test:5432/cinemaabyss?sslmode=disable" \
+            -e DB_CONNECTION_STRING="postgres://postgres:postgres_password@postgres:5432/cinemaabyss?sslmode=disable" \
             -p 8081:8081 \
             movies-service:test
 
       - name: Build and start Events Service
         run: |
           docker build -t events-service:test -f ./src/microservices/Dockerfile-events ./src/microservices
-          docker run -d --name events-service-test \
+          docker run -d --name events-service \
             --network cinemaabyss-network \
             -e PORT=8082 \
-            -e KAFKA_BROKERS="kafka-test:9092" \
+            -e KAFKA_BROKERS="kafka:9092" \
             -p 8082:8082 \
             events-service:test
 
       - name: Build and start Proxy Service
         run: |
-          docker build -t proxy-service:test ./src/microservices -f ./src/microservices/Dockerfile-proxy
-          docker run -d --name proxy-service-test \
+          docker build -t proxy-service:test -f ./src/microservices/Dockerfile-proxy ./src/microservices
+          docker run -d --name proxy-service \
             --network cinemaabyss-network \
             --env-file .env \
             -p 8000:8000 \
@@ -207,41 +187,57 @@ jobs:
           echo "Waiting for services to start..."
           sleep 15
           
-          # Проверяем health endpoints
-          timeout 60 bash -c 'until curl -s http://localhost:8080/health > /dev/null; do echo "Waiting for monolith..."; sleep 2; done'
-          timeout 60 bash -c 'until curl -s http://localhost:8081/health > /dev/null; do echo "Waiting for movies service..."; sleep 2; done'
-          timeout 60 bash -c 'until curl -s http://localhost:8082/health > /dev/null; do echo "Waiting for events service..."; sleep 2; done'
-          timeout 60 bash -c 'until curl -s http://localhost:8000/health > /dev/null; do echo "Waiting for proxy service..."; sleep 2; done'
-          
-          echo "All services are ready!"
+          for i in {1..30}; do
+            if curl -s http://localhost:8080/health > /dev/null && \
+               curl -s http://localhost:8081/health > /dev/null && \
+               curl -s http://localhost:8082/health > /dev/null && \
+               curl -s http://localhost:8000/health > /dev/null; then
+              echo "All services are ready!"
+              break
+            fi
+            echo "Waiting for services... ($i/30)"
+            sleep 2
+          done
 
       - name: Debug network connectivity
         run: |
           echo "=== Testing DNS resolution ==="
-          docker run --rm --network=cinemaabyss-network alpine nslookup monolith-test || true
-          docker run --rm --network=cinemaabyss-network alpine nslookup movies-service-test || true
-          docker run --rm --network=cinemaabyss-network alpine nslookup events-service-test || true
-          docker run --rm --network=cinemaabyss-network alpine nslookup proxy-service-test || true
+          docker run --rm --network=cinemaabyss-network alpine nslookup monolith || true
+          docker run --rm --network=cinemaabyss-network alpine nslookup movies-service || true
+          docker run --rm --network=cinemaabyss-network alpine nslookup events-service || true
+          docker run --rm --network=cinemaabyss-network alpine nslookup proxy-service || true
           
           echo "=== Testing HTTP connectivity ==="
-          docker run --rm --network=cinemaabyss-network curlimages/curl curl -v http://monolith-test:8080/health || true
-          docker run --rm --network=cinemaabyss-network curlimages/curl curl -v http://movies-service-test:8081/health || true
-          docker run --rm --network=cinemaabyss-network curlimages/curl curl -v http://events-service-test:8082/health || true
-          docker run --rm --network=cinemaabyss-network curlimages/curl curl -v http://proxy-service-test:8000/health || true
+          docker run --rm --network=cinemaabyss-network curlimages/curl curl -v http://monolith:8080/health || true
+          docker run --rm --network=cinemaabyss-network curlimages/curl curl -v http://movies-service:8081/health || true
+          docker run --rm --network=cinemaabyss-network curlimages/curl curl -v http://events-service:8082/health || true
+          docker run --rm --network=cinemaabyss-network curlimages/curl curl -v http://proxy-service:8000/health || true
 
-      - name: Run Postman tests in Docker
+      - name: Run Postman tests
         run: |
           cd tests/postman
-          
-          # Собираем образ для тестов
           docker build -t cinemaabyss-api-tests .
           
-          # Запускаем тесты с использованием docker.environment.json
+          # Создаем временный environment файл с правильными именами
+          cat > test-env.json << EOF
+          {
+            "id": "test-env",
+            "name": "Test Environment",
+            "values": [
+              {"key": "baseUrl", "value": "http://monolith:8080", "enabled": true},
+              {"key": "moviesServiceUrl", "value": "http://movies-service:8081", "enabled": true},
+              {"key": "eventsServiceUrl", "value": "http://events-service:8082", "enabled": true},
+              {"key": "proxyServiceUrl", "value": "http://proxy-service:8000", "enabled": true}
+            ]
+          }
+          EOF
+          
           docker run --rm \
             --network=cinemaabyss-network \
             -v "$(pwd)/reports:/app/reports" \
+            -v "$(pwd)/test-env.json:/app/test-env.json" \
             cinemaabyss-api-tests \
-            --environment docker
+            --environment test-env
 
       - name: Upload test reports
         if: always()
@@ -253,136 +249,6 @@ jobs:
       - name: Clean up test containers
         if: always()
         run: |
-          docker stop monolith-test movies-service-test events-service-test proxy-service-test postgres-test zookeeper-test kafka-test || true
-          docker rm monolith-test movies-service-test events-service-test proxy-service-test postgres-test zookeeper-test kafka-test || true
+          docker stop monolith movies-service events-service proxy-service postgres zookeeper kafka || true
+          docker rm monolith movies-service events-service proxy-service postgres zookeeper kafka || true
           docker network rm cinemaabyss-network || true
-
-  build-and-push:
-    needs: test
-    runs-on: ubuntu-latest
-    permissions:
-      contents: read
-      packages: write
-    if: success() && github.event_name != 'pull_request'
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to the Container registry
-        uses: docker/login-action@v3
-        with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      # Monolith
-      - name: Extract metadata for Monolith
-        id: meta-monolith
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.MONOLITH_IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
-            type=ref,event=branch
-            latest
-
-      - name: Build and push Monolith
-        uses: docker/build-push-action@v5
-        with:
-          context: ./src/monolith
-          push: true
-          tags: ${{ steps.meta-monolith.outputs.tags }}
-          labels: ${{ steps.meta-monolith.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # Movies Service
-      - name: Extract metadata for Movies Service
-        id: meta-movies
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.MOVIES_SERVICE_IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
-            type=ref,event=branch
-            latest
-
-      - name: Build and push Movies Service
-        uses: docker/build-push-action@v5
-        with:
-          context: ./src/microservices/movies
-          push: true
-          tags: ${{ steps.meta-movies.outputs.tags }}
-          labels: ${{ steps.meta-movies.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # Events Service
-      - name: Extract metadata for Events Service
-        id: meta-events
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.EVENTS_SERVICE_IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
-            type=ref,event=branch
-            latest
-
-      - name: Build and push Events Service
-        uses: docker/build-push-action@v5
-        with:
-          context: ./src/microservices/events
-          file: ./src/microservices/Dockerfile-events
-          push: true
-          tags: ${{ steps.meta-events.outputs.tags }}
-          labels: ${{ steps.meta-events.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      # Proxy Service
-      - name: Extract metadata for Proxy Service
-        id: meta-proxy
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.REGISTRY }}/${{ env.PROXY_SERVICE_IMAGE_NAME }}
-          tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,format=short
-            type=ref,event=branch
-            latest
-
-      - name: Build and push Proxy Service
-        uses: docker/build-push-action@v5
-        with:
-          context: ./src/microservices/proxy
-          file: ./src/microservices/Dockerfile-proxy
-          push: true
-          tags: ${{ steps.meta-proxy.outputs.tags }}
-          labels: ${{ steps.meta-proxy.outputs.labels }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-  notify:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    if: success() && github.event_name != 'pull_request'
-    steps:
-      - name: Send notification
-        run: |
-          echo "✅ All services built and pushed successfully!"
-          echo "📦 Images published to GitHub Container Registry:"
-          echo "  - Monolith: ${{ env.MONOLITH_IMAGE_NAME }}"
-          echo "  - Movies Service: ${{ env.MOVIES_SERVICE_IMAGE_NAME }}"
-          echo "  - Events Service: ${{ env.EVENTS_SERVICE_IMAGE_NAME }}"
-          echo "  - Proxy Service: ${{ env.PROXY_SERVICE_IMAGE_NAME }}"
