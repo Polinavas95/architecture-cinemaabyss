@@ -55,18 +55,92 @@ jobs:
           CACHE_TTL=300
           EOF
 
-      - name: Start PostgreSQL
+      - name: Start PostgreSQL with schema initialization
         run: |
+          # Создаем временную директорию для init.sql
+          mkdir -p ./docker-entrypoint-initdb.d/
+          
+          # Проверяем наличие init.sql
+          if [ -f ./src/database/init.sql ]; then
+            echo "Found init.sql, copying..."
+            cp ./src/database/init.sql ./docker-entrypoint-initdb.d/
+          else
+            echo "init.sql not found, creating default schema..."
+            cat > ./docker-entrypoint-initdb.d/init.sql << 'EOF'
+            -- Users table
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) NOT NULL UNIQUE,
+                email VARCHAR(255) NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            -- Movies table
+            CREATE TABLE IF NOT EXISTS movies (
+                id SERIAL PRIMARY KEY,
+                title VARCHAR(255) NOT NULL,
+                description TEXT,
+                genres JSONB DEFAULT '[]',
+                rating FLOAT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            -- Payments table
+            CREATE TABLE IF NOT EXISTS payments (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                amount DECIMAL(10,2) NOT NULL,
+                status VARCHAR(50) DEFAULT 'completed',
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            -- Subscriptions table
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                plan_type VARCHAR(50) NOT NULL,
+                start_date TIMESTAMP NOT NULL,
+                end_date TIMESTAMP NOT NULL,
+                status VARCHAR(50) DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            -- Insert sample data for testing
+            INSERT INTO users (username, email) VALUES 
+                ('testuser1', 'test1@example.com'),
+                ('testuser2', 'test2@example.com')
+            ON CONFLICT DO NOTHING;
+            
+            INSERT INTO movies (title, description, genres, rating) VALUES 
+                ('Inception', 'A mind-bending thriller', '["Sci-Fi", "Thriller"]'::jsonb, 8.8),
+                ('The Matrix', 'A computer hacker learns about the true nature of reality', '["Sci-Fi", "Action"]'::jsonb, 8.7)
+            ON CONFLICT DO NOTHING;
+          EOF
+          fi
+          
+          # Запускаем PostgreSQL с монтированием init.sql
           docker run -d --name postgres-test \
             --network cinemaabyss-network \
             -e POSTGRES_USER=postgres \
             -e POSTGRES_PASSWORD=postgres_password \
             -e POSTGRES_DB=cinemaabyss \
+            -v "$(pwd)/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d" \
             -p 5432:5432 \
             postgres:14
           
           # Ждем готовности PostgreSQL
-          timeout 60 bash -c 'until docker exec postgres-test pg_isready; do sleep 2; done'
+          echo "Waiting for PostgreSQL to start..."
+          timeout 60 bash -c 'until docker exec postgres-test pg_isready -U postgres; do sleep 2; done'
+          
+          # Даем время на выполнение init.sql
+          sleep 5
+          
+          # Проверяем созданные таблицы
+          echo "Checking database tables:"
+          docker exec postgres-test psql -U postgres -d cinemaabyss -c "\dt"
+          
+          echo "PostgreSQL is ready with initialized schema"
+
 
       - name: Start ZooKeeper and Kafka
         run: |
@@ -91,12 +165,13 @@ jobs:
       - name: Build and start Monolith
         run: |
           docker build -t monolith:test ./src/monolith
-          docker run -d --name monolith-test \
+          docker run -d --name monolith \
             --network cinemaabyss-network \
             -e PORT=8080 \
             -e DB_CONNECTION_STRING="postgres://postgres:postgres_password@postgres-test:5432/cinemaabyss?sslmode=disable" \
             -p 8080:8080 \
             monolith:test
+          sleep 5
 
       - name: Build and start Movies Service
         run: |
