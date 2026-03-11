@@ -27,44 +27,91 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+
+      - name: Create .env file for proxy-service
+        run: |
+          cat > .env << EOF
+          PORT=8000
+          MONOLITH_URL=http://monolith:8080
+          MOVIES_SERVICE_URL=http://movies-service:8081
+          EVENTS_SERVICE_URL=http://events-service:8082
+          GRADUAL_MIGRATION=true
+          MOVIES_MIGRATION_PERCENT=50
+          USE_MOVIES_SERVICE_FOR_GET=true
+          USE_MOVIES_SERVICE_FOR_POST=false
+          USE_MOVIES_SERVICE_FOR_PUT=false
+          USE_MOVIES_SERVICE_FOR_DELETE=false
+          REQUEST_TIMEOUT=10
+          ENABLE_CACHING=true
+          CACHE_TTL=300
+          EOF
 
       - name: Set up Docker Compose
         run: |
           docker compose --version
-      
+
       - name: Start services with Docker Compose
         run: |
           docker compose up -d
-          # Wait for services to be ready
           echo "Waiting for services to be ready..."
-          sleep 120
-      
+          sleep 30
+
+      - name: Wait for services health
+        run: |
+          echo "Checking service health..."
+          timeout 60 bash -c 'until curl -s http://localhost:8080/health > /dev/null; do echo "Waiting for monolith..."; sleep 2; done'
+          timeout 60 bash -c 'until curl -s http://localhost:8081/health > /dev/null; do echo "Waiting for movies service..."; sleep 2; done'
+          timeout 60 bash -c 'until curl -s http://localhost:8082/health > /dev/null; do echo "Waiting for events service..."; sleep 2; done'
+          timeout 60 bash -c 'until curl -s http://localhost:8000/health > /dev/null; do echo "Waiting for proxy service..."; sleep 2; done'
+          echo "All services are healthy!"
+
       - name: Set up Node.js
-        uses: actions/setup-node@v3
+        uses: actions/setup-node@v4
         with:
           node-version: '18'
           cache: 'npm'
           cache-dependency-path: tests/postman/package-lock.json
-      
+
       - name: Install Newman and dependencies
         working-directory: tests/postman
         run: npm install
-      
-      - name: Run API tests
+
+      - name: Update docker.environment.json with correct service names
         working-directory: tests/postman
         run: |
+          cat > docker.environment.json << EOF
+          {
+            "id": "docker-env",
+            "name": "Docker Environment",
+            "values": [
+              {"key": "baseUrl", "value": "http://monolith:8080", "enabled": true},
+              {"key": "moviesServiceUrl", "value": "http://movies-service:8081", "enabled": true},
+              {"key": "eventsServiceUrl", "value": "http://events-service:8082", "enabled": true},
+              {"key": "proxyServiceUrl", "value": "http://proxy-service:8000", "enabled": true}
+            ]
+          }
+          EOF
 
-          docker compose up -d
-          # Wait for services to be ready
-          echo "Waiting for services to be ready..."
-          sleep 15
+      - name: Run API tests in Docker
+        working-directory: tests/postman
+        run: |
           # Build the Docker image
           docker build -t cinemaabyss-api-tests .
           
           # Run the tests in Docker
-          docker run --network=cinemaabyss-network -v "$(pwd)/reports:/app/reports" cinemaabyss-api-tests
-        
+          docker run --rm \
+            --network=cinemaabyss-network \
+            -v "$(pwd)/reports:/app/reports" \
+            cinemaabyss-api-tests \
+            --environment docker
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-test-reports
+          path: tests/postman/reports/
       
       - name: Stop services
         if: always()
