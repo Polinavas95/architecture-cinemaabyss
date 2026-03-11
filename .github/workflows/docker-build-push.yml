@@ -8,6 +8,12 @@ on:
       - 'src/**'
       - 'tests/postman/**'
       - '.github/workflows/docker-build-push.yml'
+  pull_request:
+    branches: [ main ]
+    paths:
+      - 'src/**'
+      - 'tests/postman/**'
+      - '.github/workflows/docker-build-push.yml'
   release:
     types: [published]
 
@@ -21,85 +27,103 @@ env:
 jobs:
   test:
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:14
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres_password
-          POSTGRES_DB: cinemaabyss
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-      zookeeper:
-        image: wurstmeister/zookeeper:latest
-        ports:
-          - 2181:2181
-
-      kafka:
-        image: wurstmeister/kafka:2.13-2.7.0
-        env:
-          KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
-          KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-          KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-          KAFKA_CREATE_TOPICS: "movie-events:1:1,user-events:1:1,payment-events:1:1"
-        ports:
-          - 9092:9092
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
-      - name: Build and start all services
+      - name: Create docker network
+        run: docker network create cinemaabyss-network || true
+
+      - name: Create .env file for proxy-service
         run: |
-          # Создаем сеть для тестов
-          docker network create cinemaabyss-network || true
+          cat > .env << EOF
+          PORT=8000
+          MONOLITH_URL=http://monolith:8080
+          MOVIES_SERVICE_URL=http://movies-service:8081
+          EVENTS_SERVICE_URL=http://events-service:8082
+          GRADUAL_MIGRATION=true
+          MOVIES_MIGRATION_PERCENT=50
+          USE_MOVIES_SERVICE_FOR_GET=true
+          USE_MOVIES_SERVICE_FOR_POST=false
+          USE_MOVIES_SERVICE_FOR_PUT=false
+          USE_MOVIES_SERVICE_FOR_DELETE=false
+          REQUEST_TIMEOUT=10
+          ENABLE_CACHING=true
+          CACHE_TTL=300
+          EOF
+
+      - name: Start PostgreSQL
+        run: |
+          docker run -d --name postgres-test \
+            --network cinemaabyss-network \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres_password \
+            -e POSTGRES_DB=cinemaabyss \
+            -p 5432:5432 \
+            postgres:14
           
-          # Собираем и запускаем монолит
+          # Ждем готовности PostgreSQL
+          timeout 60 bash -c 'until docker exec postgres-test pg_isready; do sleep 2; done'
+
+      - name: Start ZooKeeper and Kafka
+        run: |
+          # ZooKeeper
+          docker run -d --name zookeeper-test \
+            --network cinemaabyss-network \
+            -p 2181:2181 \
+            wurstmeister/zookeeper:latest
+          
+          # Kafka
+          docker run -d --name kafka-test \
+            --network cinemaabyss-network \
+            -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka-test:9092 \
+            -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092 \
+            -e KAFKA_ZOOKEEPER_CONNECT=zookeeper-test:2181 \
+            -e KAFKA_CREATE_TOPICS="movie-events:1:1,user-events:1:1,payment-events:1:1" \
+            -p 9092:9092 \
+            wurstmeister/kafka:2.13-2.7.0
+          
+          sleep 10
+
+      - name: Build and start Monolith
+        run: |
           docker build -t monolith:test ./src/monolith
           docker run -d --name monolith-test \
             --network cinemaabyss-network \
             -e PORT=8080 \
-            -e DB_CONNECTION_STRING="postgres://postgres:postgres_password@postgres:5432/cinemaabyss?sslmode=disable" \
+            -e DB_CONNECTION_STRING="postgres://postgres:postgres_password@postgres-test:5432/cinemaabyss?sslmode=disable" \
             -p 8080:8080 \
             monolith:test
-          
-          # Собираем и запускаем movies service
+
+      - name: Build and start Movies Service
+        run: |
           docker build -t movies-service:test ./src/microservices/movies
           docker run -d --name movies-service-test \
             --network cinemaabyss-network \
             -e PORT=8081 \
-            -e DB_CONNECTION_STRING="postgres://postgres:postgres_password@postgres:5432/cinemaabyss?sslmode=disable" \
+            -e DB_CONNECTION_STRING="postgres://postgres:postgres_password@postgres-test:5432/cinemaabyss?sslmode=disable" \
             -p 8081:8081 \
             movies-service:test
-          
-          # Собираем и запускаем events service
-          docker build -t events-service:test ./src/microservices/events -f ./src/microservices/Dockerfile-events
+
+      - name: Build and start Events Service
+        run: |
+          docker build -t events-service:test ./src/microservices/events -f ./src/microservices/events/Dockerfile-events
           docker run -d --name events-service-test \
             --network cinemaabyss-network \
             -e PORT=8082 \
-            -e KAFKA_BROKERS="kafka:9092" \
+            -e KAFKA_BROKERS="kafka-test:9092" \
             -p 8082:8082 \
             events-service:test
-          
-          # Собираем и запускаем proxy service
-          docker build -t proxy-service:test ./src/microservices/proxy -f ./src/microservices/Dockerfile-proxy
+
+      - name: Build and start Proxy Service
+        run: |
+          docker build -t proxy-service:test ./src/microservices/proxy -f ./src/microservices/proxy/Dockerfile-proxy
           docker run -d --name proxy-service-test \
             --network cinemaabyss-network \
-            -e PORT=8000 \
-            -e MONOLITH_URL="http://monolith-test:8080" \
-            -e MOVIES_SERVICE_URL="http://movies-service-test:8081" \
-            -e EVENTS_SERVICE_URL="http://events-service-test:8082" \
-            -e GRADUAL_MIGRATION="true" \
-            -e MOVIES_MIGRATION_PERCENT="50" \
+            --env-file .env \
             -p 8000:8000 \
             proxy-service:test
 
@@ -123,10 +147,10 @@ jobs:
           # Собираем образ для тестов
           docker build -t cinemaabyss-api-tests .
           
-          # Запускаем тесты в Docker с использованием созданной сети
+          # Запускаем тесты с использованием docker.environment.json
           docker run --rm \
             --network=cinemaabyss-network \
-            -e NODE_ENV=test \
+            -v "$(pwd)/reports:/app/reports" \
             cinemaabyss-api-tests \
             --environment docker
 
@@ -140,8 +164,9 @@ jobs:
       - name: Clean up test containers
         if: always()
         run: |
-          docker stop monolith-test movies-service-test events-service-test proxy-service-test || true
-          docker rm monolith-test movies-service-test events-service-test proxy-service-test || true
+          docker stop monolith-test movies-service-test events-service-test proxy-service-test postgres-test zookeeper-test kafka-test || true
+          docker rm monolith-test movies-service-test events-service-test proxy-service-test postgres-test zookeeper-test kafka-test || true
+          docker network rm cinemaabyss-network || true
 
   build-and-push:
     needs: test
@@ -149,17 +174,17 @@ jobs:
     permissions:
       contents: read
       packages: write
-    if: success()
+    if: success() && github.event_name != 'pull_request'
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
+        uses: docker/setup-buildx-action@v3
 
       - name: Log in to the Container registry
-        uses: docker/login-action@v2
+        uses: docker/login-action@v3
         with:
           registry: ${{ env.REGISTRY }}
           username: ${{ github.actor }}
@@ -168,7 +193,7 @@ jobs:
       # Monolith
       - name: Extract metadata for Monolith
         id: meta-monolith
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.MONOLITH_IMAGE_NAME }}
           tags: |
@@ -179,7 +204,7 @@ jobs:
             latest
 
       - name: Build and push Monolith
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v5
         with:
           context: ./src/monolith
           push: true
@@ -191,7 +216,7 @@ jobs:
       # Movies Service
       - name: Extract metadata for Movies Service
         id: meta-movies
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.MOVIES_SERVICE_IMAGE_NAME }}
           tags: |
@@ -202,7 +227,7 @@ jobs:
             latest
 
       - name: Build and push Movies Service
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v5
         with:
           context: ./src/microservices/movies
           push: true
@@ -214,7 +239,7 @@ jobs:
       # Events Service
       - name: Extract metadata for Events Service
         id: meta-events
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.EVENTS_SERVICE_IMAGE_NAME }}
           tags: |
@@ -225,10 +250,10 @@ jobs:
             latest
 
       - name: Build and push Events Service
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v5
         with:
           context: ./src/microservices/events
-          file: ./src/microservices/Dockerfile-events
+          file: ./src/microservices/events/Dockerfile-events
           push: true
           tags: ${{ steps.meta-events.outputs.tags }}
           labels: ${{ steps.meta-events.outputs.labels }}
@@ -238,7 +263,7 @@ jobs:
       # Proxy Service
       - name: Extract metadata for Proxy Service
         id: meta-proxy
-        uses: docker/metadata-action@v4
+        uses: docker/metadata-action@v5
         with:
           images: ${{ env.REGISTRY }}/${{ env.PROXY_SERVICE_IMAGE_NAME }}
           tags: |
@@ -249,10 +274,10 @@ jobs:
             latest
 
       - name: Build and push Proxy Service
-        uses: docker/build-push-action@v4
+        uses: docker/build-push-action@v5
         with:
           context: ./src/microservices/proxy
-          file: ./src/microservices/Dockerfile-proxy
+          file: ./src/microservices/proxy/Dockerfile-proxy
           push: true
           tags: ${{ steps.meta-proxy.outputs.tags }}
           labels: ${{ steps.meta-proxy.outputs.labels }}
@@ -262,7 +287,7 @@ jobs:
   notify:
     needs: build-and-push
     runs-on: ubuntu-latest
-    if: success()
+    if: success() && github.event_name != 'pull_request'
     steps:
       - name: Send notification
         run: |
