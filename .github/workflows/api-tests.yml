@@ -54,17 +54,42 @@ jobs:
       - name: Start services with Docker Compose
         run: |
           docker compose up -d
-          echo "Waiting for services to be ready..."
-          sleep 30
+          echo "Waiting for services to start..."
+          sleep 15
 
-      - name: Wait for services health
+      - name: Check service logs
+        run: |
+          echo "=== Monolith logs ==="
+          docker compose logs monolith --tail 20 || true
+          echo "=== Movies Service logs ==="
+          docker compose logs movies-service --tail 20 || true
+          echo "=== Events Service logs ==="
+          docker compose logs events-service --tail 20 || true
+          echo "=== Proxy Service logs ==="
+          docker compose logs proxy-service --tail 20 || true
+
+      - name: Wait for services health (using docker exec)
         run: |
           echo "Checking service health..."
-          timeout 60 bash -c 'until curl -s http://localhost:8080/health > /dev/null; do echo "Waiting for monolith..."; sleep 2; done'
-          timeout 60 bash -c 'until curl -s http://localhost:8081/health > /dev/null; do echo "Waiting for movies service..."; sleep 2; done'
-          timeout 60 bash -c 'until curl -s http://localhost:8082/health > /dev/null; do echo "Waiting for events service..."; sleep 2; done'
-          timeout 60 bash -c 'until curl -s http://localhost:8000/health > /dev/null; do echo "Waiting for proxy service..."; sleep 2; done'
-          echo "All services are healthy!"
+          
+          # Проверяем через docker exec
+          for i in {1..30}; do
+            MONOLITH_HEALTH=$(docker compose exec -T monolith curl -s http://localhost:8080/health 2>/dev/null || echo "failed")
+            MOVIES_HEALTH=$(docker compose exec -T movies-service curl -s http://localhost:8081/health 2>/dev/null || echo "failed")
+            EVENTS_HEALTH=$(docker compose exec -T events-service curl -s http://localhost:8082/health 2>/dev/null || echo "failed")
+            PROXY_HEALTH=$(docker compose exec -T proxy-service curl -s http://localhost:8000/health 2>/dev/null || echo "failed")
+            
+            if [[ "$MONOLITH_HEALTH" != "failed" ]] && \
+               [[ "$MOVIES_HEALTH" != "failed" ]] && \
+               [[ "$EVENTS_HEALTH" != "failed" ]] && \
+               [[ "$PROXY_HEALTH" != "failed" ]]; then
+              echo "All services are healthy!"
+              break
+            fi
+            
+            echo "Attempt $i/30: Waiting for services..."
+            sleep 2
+          done
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -101,7 +126,7 @@ jobs:
           
           # Run the tests in Docker
           docker run --rm \
-            --network=cinemaabyss-network \
+            --network=cinemaabyss_default \
             -v "$(pwd)/reports:/app/reports" \
             cinemaabyss-api-tests \
             --environment docker
