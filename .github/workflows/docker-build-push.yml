@@ -230,11 +230,8 @@ jobs:
             ]
           }
           EOF
-
-          # Собираем образ для тестов
           docker build -t cinemaabyss-api-tests .
 
-          # Запускаем тесты
           docker run --rm \
             --network=cinemaabyss-network \
             -v "$(pwd)/reports:/app/reports" \
