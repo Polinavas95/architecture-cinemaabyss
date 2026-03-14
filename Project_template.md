@@ -249,6 +249,7 @@ cat .docker/config.json | base64
 
   zookeeper-0                       1/1     Running 
 ```
+![скрин запуска](images/Снимок экрана 2026-03-14 в 13.33.07.png)
 
   8. Добавим ingress
 
@@ -277,10 +278,12 @@ cat .docker/config.json | base64
   Часть тестов с health-чек упадет, но создание событий отработает.
   Откройте логи event-service и сделайте скриншот обработки событий
 ![скрипшот логов event-service](images/Снимок экрана 2026-03-12 в 11.37.26.png)
+![скрин прогона тестов и дата](images/Снимок экрана 2026-03-14 в 13.49.13.png)
 
 #### Шаг 3
 Добавьте сюда скриншота вывода при вызове https://cinemaabyss.example.com/api/movies и  скриншот вывода event-service после вызова тестов.
-![скриншота вывода при вызове https://cinemaabyss.example.com/api/movies](images/Снимок экрана 2026-03-12 в 11.38.46.png)
+![скрин страницы](images/Снимок экрана 2026-03-14 в 13.44.41.png)
+![скрин страницы](images/Снимок экрана 2026-03-14 в 13.45.41.png)
 ![скриншот вывода event-service после вызова тестов](images/Снимок экрана 2026-03-12 в 11.39.05.png)
 
 # Задание 4
@@ -358,6 +361,7 @@ https://cinemaabyss.example.com/api/movies
 и приложите скриншот развертывания helm и вывода https://cinemaabyss.example.com/api/movies
 ![скриншот развертывания helm](images/Снимок экрана 2026-03-12 в 12.40.19.png)
 ![вывод https://cinemaabyss.example.com/api/movies](images/Снимок экрана 2026-03-12 в 12.40.41.png)
+![вывод страницы https://cinemaabyss.example.com/api/movies](images/Снимок экрана 2026-03-14 в 13.29.27.png)
 
 ## Удаляем все
 

@@ -37,7 +37,7 @@ app = FastAPI(
     title="Strangler Fig Proxy for CinemaAbyss",
     description="API Gateway с паттерном Strangler Fig для постепенной миграции с монолита на микросервисы",
     version="1.0.0",
-    docs_url="/",
+    docs_url="/docs",
     lifespan=lifespan,
 )
 
