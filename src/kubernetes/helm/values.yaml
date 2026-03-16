@@ -35,7 +35,7 @@ monolith:
   enabled: true
   image:
     repository: ghcr.io/polinavas95/architecture-cinemaabyss/monolith
-    tag: latest
+    tag: multiarch
     pullPolicy: Always
   replicas: 1
   resources:
@@ -55,7 +55,7 @@ proxyService:
   enabled: true
   image:
     repository: ghcr.io/polinavas95/architecture-cinemaabyss/proxy-service
-    tag: v2
+    tag: multiarch
     pullPolicy: Always
   replicas: 1
   resources:
@@ -75,7 +75,7 @@ moviesService:
   enabled: true
   image:
     repository: ghcr.io/polinavas95/architecture-cinemaabyss/movies-service
-    tag: latest
+    tag: multiarch
     pullPolicy: Always
   replicas: 1
   resources:
@@ -95,7 +95,7 @@ eventsService:
   enabled: true
   image:
     repository: ghcr.io/polinavas95/architecture-cinemaabyss/events-service
-    tag: latest
+    tag: multiarch
     pullPolicy: Always
   replicas: 1
   resources:
