@@ -27,45 +27,255 @@ jobs:
     
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
-      - name: Set up Docker Compose
-        run: |
-          docker compose --version
-      
-      - name: Start services with Docker Compose
-        run: |
-          docker compose up -d
-          # Wait for services to be ready
-          echo "Waiting for services to be ready..."
-          sleep 120
-      
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
         with:
-          node-version: '18'
-          cache: 'npm'
-          cache-dependency-path: tests/postman/package-lock.json
-      
-      - name: Install Newman and dependencies
-        working-directory: tests/postman
-        run: npm install
-      
-      - name: Run API tests
-        working-directory: tests/postman
-        run: |
+          driver-opts: |
+            image=moby/buildkit:latest
+            network=host
+          buildkitd-flags: --debug
 
-          docker compose up -d
-          # Wait for services to be ready
-          echo "Waiting for services to be ready..."
-          sleep 15
-          # Build the Docker image
-          docker build -t cinemaabyss-api-tests .
+      - name: Configure Docker for reliable pulls
+        run: |
+          sudo mkdir -p /etc/docker
+          sudo tee /etc/docker/daemon.json > /dev/null <<EOF
+          {
+            "registry-mirrors": [
+              "https://docker.m.daocloud.io",
+              "https://docker.nju.edu.cn",
+              "https://docker.mirrors.ustc.edu.cn"
+            ],
+            "max-concurrent-downloads": 10,
+            "max-concurrent-uploads": 10,
+            "log-driver": "json-file",
+            "log-opts": {
+              "max-size": "10m",
+              "max-file": "3"
+            }
+          }
+          EOF
           
-          # Run the tests in Docker
-          docker run --network=cinemaabyss-network -v "$(pwd)/reports:/app/reports" cinemaabyss-api-tests
-        
-      
-      - name: Stop services
+          sudo systemctl restart docker || true
+          sleep 10
+
+      - name: Create docker network
+        run: docker network create cinemaabyss-network || true
+
+      - name: Create .env file for proxy-service
+        run: |
+          cat > .env << EOF
+          PORT=8000
+          MONOLITH_URL=http://monolith:8080
+          MOVIES_SERVICE_URL=http://movies-service:8081
+          EVENTS_SERVICE_URL=http://events-service:8082
+          GRADUAL_MIGRATION=true
+          MOVIES_MIGRATION_PERCENT=50
+          USE_MOVIES_SERVICE_FOR_GET=true
+          USE_MOVIES_SERVICE_FOR_POST=false
+          USE_MOVIES_SERVICE_FOR_PUT=false
+          USE_MOVIES_SERVICE_FOR_DELETE=false
+          REQUEST_TIMEOUT=10
+          ENABLE_CACHING=true
+          CACHE_TTL=300
+          EOF
+
+      - name: Start PostgreSQL with schema initialization
+        run: |
+          mkdir -p ./docker-entrypoint-initdb.d/
+          
+          if [ -f ./src/database/init.sql ]; then
+            echo "Found init.sql, copying..."
+            cp ./src/database/init.sql ./docker-entrypoint-initdb.d/
+          else
+            echo "init.sql not found, creating default schema..."
+            cat > ./docker-entrypoint-initdb.d/init.sql << 'EOF'
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(255) NOT NULL UNIQUE,
+                email VARCHAR(255) NOT NULL UNIQUE,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            CREATE TABLE IF NOT EXISTS movies (
+                id SERIAL PRIMARY KEY,
+                title VARCHAR(255) NOT NULL,
+                description TEXT,
+                genres JSONB DEFAULT '[]',
+                rating FLOAT DEFAULT 0,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            CREATE TABLE IF NOT EXISTS payments (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                amount DECIMAL(10,2) NOT NULL,
+                status VARCHAR(50) DEFAULT 'completed',
+                timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                plan_type VARCHAR(50) NOT NULL,
+                start_date TIMESTAMP NOT NULL,
+                end_date TIMESTAMP NOT NULL,
+                status VARCHAR(50) DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            );
+            
+            INSERT INTO users (username, email) VALUES 
+                ('testuser1', 'test1@example.com'),
+                ('testuser2', 'test2@example.com')
+            ON CONFLICT DO NOTHING;
+            
+            INSERT INTO movies (title, description, genres, rating) VALUES 
+                ('Inception', 'A mind-bending thriller', '["Sci-Fi", "Thriller"]'::jsonb, 8.8),
+                ('The Matrix', 'A computer hacker learns about the true nature of reality', '["Sci-Fi", "Action"]'::jsonb, 8.7)
+            ON CONFLICT DO NOTHING;
+          EOF
+          fi
+          
+          docker run -d --name postgres \
+            --network cinemaabyss-network \
+            -e POSTGRES_USER=postgres \
+            -e POSTGRES_PASSWORD=postgres_password \
+            -e POSTGRES_DB=cinemaabyss \
+            -v "$(pwd)/docker-entrypoint-initdb.d:/docker-entrypoint-initdb.d" \
+            -p 5432:5432 \
+            postgres:14
+          
+          timeout 60 bash -c 'until docker exec postgres pg_isready -U postgres; do sleep 2; done'
+          sleep 5
+          echo "PostgreSQL is ready"
+
+      - name: Start ZooKeeper and Kafka
+        run: |
+          docker run -d --name zookeeper \
+            --network cinemaabyss-network \
+            -p 2181:2181 \
+            wurstmeister/zookeeper:latest
+          
+          docker run -d --name kafka \
+            --network cinemaabyss-network \
+            -e KAFKA_ADVERTISED_LISTENERS=PLAINTEXT://kafka:9092 \
+            -e KAFKA_LISTENERS=PLAINTEXT://0.0.0.0:9092 \
+            -e KAFKA_ZOOKEEPER_CONNECT=zookeeper:2181 \
+            -e KAFKA_CREATE_TOPICS="movie-events:1:1,user-events:1:1,payment-events:1:1" \
+            -p 9092:9092 \
+            wurstmeister/kafka:2.13-2.7.0
+          
+          sleep 10
+
+      - name: Pre-pull base images
+        run: |
+          IMAGES=("golang:1.23-alpine" "python:3.11-slim" "alpine:latest")
+          for image in "${IMAGES[@]}"; do
+            for i in {1..3}; do
+              echo "Attempt $i to pull $image"
+              if docker pull $image; then
+                echo "Successfully pulled $image"
+                break
+              else
+                echo "Failed to pull $image, waiting $((i * 5)) seconds..."
+                sleep $((i * 5))
+              fi
+            done
+          done
+
+      - name: Build and start Monolith
+        run: |
+          docker build -t monolith:test ./src/monolith
+          docker run -d --name monolith \
+            --network cinemaabyss-network \
+            -e PORT=8080 \
+            -e DB_CONNECTION_STRING="postgres://postgres:postgres_password@postgres:5432/cinemaabyss?sslmode=disable" \
+            -p 8080:8080 \
+            monolith:test
+          sleep 5
+
+      - name: Build and start Movies Service
+        run: |
+          docker build -t movies-service:test ./src/microservices/movies
+          docker run -d --name movies-service \
+            --network cinemaabyss-network \
+            -e PORT=8081 \
+            -e DB_CONNECTION_STRING="postgres://postgres:postgres_password@postgres:5432/cinemaabyss?sslmode=disable" \
+            -p 8081:8081 \
+            movies-service:test
+
+      - name: Build and start Events Service
+        run: |
+          docker build -t events-service:test -f ./src/microservices/Dockerfile-events ./src/microservices
+          docker run -d --name events-service \
+            --network cinemaabyss-network \
+            -e PORT=8082 \
+            -e KAFKA_BROKERS="kafka:9092" \
+            -p 8082:8082 \
+            events-service:test
+
+      - name: Build and start Proxy Service
+        run: |
+          docker build -t proxy-service:test -f ./src/microservices/Dockerfile-proxy ./src/microservices
+          docker run -d --name proxy-service \
+            --network cinemaabyss-network \
+            --env-file .env \
+            -p 8000:8000 \
+            proxy-service:test
+
+      - name: Wait for services to be ready
+        run: |
+          echo "Waiting for services to start..."
+          sleep 15
+          
+          for i in {1..30}; do
+            if curl -s http://localhost:8080/health > /dev/null && \
+               curl -s http://localhost:8081/health > /dev/null && \
+               curl -s http://localhost:8082/health > /dev/null && \
+               curl -s http://localhost:8000/health > /dev/null; then
+              echo "All services are ready!"
+              break
+            fi
+            echo "Waiting for services... ($i/30)"
+            sleep 2
+          done
+
+      - name: Run Postman tests
+        run: |
+          cd tests/postman
+
+          cat > docker.environment.json << EOF
+          {
+            "id": "docker-env",
+            "name": "Docker Environment",
+            "values": [
+              {"key": "baseUrl", "value": "http://monolith:8080", "enabled": true},
+              {"key": "moviesServiceUrl", "value": "http://movies-service:8081", "enabled": true},
+              {"key": "eventsServiceUrl", "value": "http://events-service:8082", "enabled": true},
+              {"key": "proxyServiceUrl", "value": "http://proxy-service:8000", "enabled": true}
+            ]
+          }
+          EOF
+
+          docker build -t cinemaabyss-api-tests .
+
+          docker run --rm \
+            --network=cinemaabyss-network \
+            -v "$(pwd)/reports:/app/reports" \
+            cinemaabyss-api-tests \
+            --environment docker
+
+      - name: Upload test reports
         if: always()
-        run: docker compose down
+        uses: actions/upload-artifact@v4
+        with:
+          name: api-test-reports
+          path: tests/postman/reports/
+
+      - name: Clean up test containers
+        if: always()
+        run: |
+          docker stop monolith movies-service events-service proxy-service postgres zookeeper kafka || true
+          docker rm monolith movies-service events-service proxy-service postgres zookeeper kafka || true
+          docker network rm cinemaabyss-network || true

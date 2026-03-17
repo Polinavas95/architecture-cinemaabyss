@@ -17,9 +17,10 @@ spec:
   {{- end }}
   rules:
   {{- range .Values.ingress.hosts }}
-  - host: {{ .host }}
+  - host: {{ .host | quote }}
     http:
       paths:
+      {{- if .paths }}
       {{- range .paths }}
       - path: {{ .path }}
         pathType: {{ .pathType }}
@@ -28,6 +29,15 @@ spec:
             name: {{ .service }}
             port:
               number: {{ .port }}
+      {{- end }}
+      {{- else }}
+      - path: /
+        pathType: Prefix
+        backend:
+          service:
+            name: proxy-service
+            port:
+              number: 8000
       {{- end }}
   {{- end }}
 {{- end }}

@@ -1,0 +1,92 @@
+@startuml
+!include <C4/C4_Container>
+!include <C4/C4_Context>
+
+title Онлайн-кинотеатр "Кинобездна" (Диаграмма контейнеров)
+
+' Пользователи и устройства
+Person(user, "Пользователь", "Зритель, смотрит фильмы, управляет подпиской")
+Person(admin, "Администратор", "Управляет каталогом, просматривает метрики")
+System_Ext(tv, "Smart TV", "Доступ к кинотеатру через телевизор")
+System_Ext(web, "Web", "Доступ через компьютер/ноутбук")
+System_Ext(mobile, "Mobile app", "Доступ через смартфон/планшет")
+System_Ext(payment_gateway, "Платежный шлюз", "Обработка платежей по подписке")
+System_Ext(email_service, "Email-сервис", "Отправка уведомлений о подписке")
+
+' домен Онлайн-кинотеатр
+Boundary(cinema_domain, "Основной домен: Онлайн-кинотеатр") {
+    Container(api_gw, "API Gateway", "Kong", "Единая точка входа, маршрутизация запросов, rate limiting")
+
+    Boundary(user_domain, "Поддомен: Управление пользователями") {
+        Container(users_svc, "Сервис пользователей", "Python/Django", "Регистрация, авторизация, управление профилем")
+        ContainerDb(users_db, "БД пользователей", "PostgreSQL", "Хранение учетных записей, персональных данных, хешей паролей")
+    }
+
+    Boundary(billing_domain, "Поддомен: Биллинг и подписки") {
+        Container(subscription_svc, "Сервис подписки", "Go", "Управление подписками, промокоды, скидки, интеграция с платежным шлюзом")
+        ContainerDb(subscription_db, "БД подписок", "PostgreSQL", "Транзакционные данные: статусы подписок, платежи, промокоды")
+    }
+
+    Boundary(catalog_domain, "Поддомен: Каталог фильмов") {
+        Container(video_svc, "Сервис видео", "Node.js/Go", "Каталог фильмов, метаданные, поиск, фильтрация")
+        ContainerDb(video_db, "БД каталога", "MongoDB", "Документы фильмов: жанры, актеры, описание, рейтинг, постеры")
+    }
+
+    Boundary(cabinet_domain, "Поддомен: Личный кабинет") {
+        Container(cabinet_svc, "Сервис личного кабинета", "Python/FastAPI", "Избранное, история просмотров, оценки пользователя")
+        ContainerDb(cabinet_db, "БД личного кабинета", "MongoDB", "Коллекции: избранное, история просмотров, оценки")
+    }
+
+    Boundary(recommendations_domain, "Поддомен: Рекомендации") {
+        Container(recommendations_svc, "Сервис рекомендаций", "Python/Gigachat", "Анализ истории, формирование топ-10 рекомендаций для каждого пользователя")
+        ContainerDb(recs_cache, "Кэш рекомендаций", "Redis", "Хранение готовых топ-10 списков по user_id для быстрой выдачи")
+    }
+
+    Container(message_broker, "Message Broker", "Kafka", "Асинхронная передача событий между сервисами")
+}
+
+Boundary(admin_domain, "Общий домен: Администрирование") {
+    Container(admin_svc, "Сервис администрирования", "Python/Keycloak", "Админ-панель, управление каталогом, просмотр метрик")
+    Container(admin_panel, "Админ-панель", "Vue.js", "Веб-интерфейс для администратора")
+    ContainerDb(analytics_db, "БД аналитики", "ClickHouse", "Хранение метрик и логов для анализа")
+}
+
+Rel(user, tv, "Использует", "HTTPS")
+Rel(user, web, "Использует", "HTTPS")
+Rel(user, mobile, "Использует", "HTTPS")
+Rel(admin, admin_panel, "Управляет", "HTTPS")
+
+Rel(tv, api_gw, "API запросы", "HTTPS")
+Rel(web, api_gw, "API запросы", "HTTPS")
+Rel(mobile, api_gw, "API запросы", "HTTPS")
+Rel(admin_panel, api_gw, "API запросы", "HTTPS")
+
+Rel(api_gw, users_svc, "Маршрут /api/users/*", "REST/HTTP")
+Rel(api_gw, subscription_svc, "Маршрут /api/subscription/*", "REST/HTTP")
+Rel(api_gw, video_svc, "Маршрут /api/video/*", "gRPC")
+Rel(api_gw, cabinet_svc, "Маршрут /api/cabinet/*", "REST/HTTP")
+Rel(api_gw, recommendations_svc, "Маршрут /api/recommendations/*", "gRPC")
+Rel(api_gw, admin_svc, "Маршрут /api/admin/*", "REST/HTTP")
+
+Rel(users_svc, users_db, "CRUD операции", "SQL")
+Rel(subscription_svc, subscription_db, "Транзакции", "SQL")
+Rel(video_svc, video_db, "CRUD операции", "MongoDB Protocol")
+Rel(cabinet_svc, cabinet_db, "CRUD операции", "MongoDB Protocol")
+Rel(recommendations_svc, recs_cache, "Чтение/запись кэша", "Redis Protocol")
+Rel(admin_svc, analytics_db, "Запись/чтение метрик", "ClickHouse Protocol")
+
+Rel(subscription_svc, payment_gateway, "Обработка платежей", "HTTPS/REST")
+Rel(users_svc, email_service, "Отправка уведомлений", "SMTP/HTTPS")
+
+Rel(users_svc, message_broker, "Публикует: UserRegistered, UserLoggedIn", "Async")
+Rel(subscription_svc, message_broker, "Публикует: SubscriptionPurchased, SubscriptionCancelled", "Async")
+Rel(video_svc, message_broker, "Публикует: FilmViewed, FilmRated", "Async")
+Rel(cabinet_svc, message_broker, "Публикует: FilmAddedToFavorites", "Async")
+
+Rel(recommendations_svc, message_broker, "Подписан: FilmViewed, FilmRated, SubscriptionPurchased", "Async")
+Rel(cabinet_svc, message_broker, "Подписан: FilmViewed, FilmRated", "Async")
+Rel(admin_svc, message_broker, "Подписан на все события для аналитики", "Async")
+
+Rel(recommendations_svc, video_svc, "Получает данные о фильмах", "REST/HTTP")
+
+@enduml

@@ -1,0 +1,186 @@
+(.venv) polinavasileva@MacBook-Pro-Polina architecture-cinemaabyss % cd tests/postman
+(.venv) polinavasileva@MacBook-Pro-Polina postman % npm run test:kubernetes                                    
+
+> cinemaabyss-api-tests@1.0.0 test:kubernetes
+> node run-tests.js --environment kubernetes
+
+Running tests against kubernetes environment...
+newman: could not find "htmlextra" reporter
+  ensure that the reporter is installed in the same directory as newman
+  please install reporter using npm
+
+newman
+
+CinemaAbyss API Tests
+
+❏ Monolith Service
+↳ Health Check
+  GET http://cinemaabyss.example.com/health [200 OK, 507B, 32ms]
+  ✓  Status code is 200
+
+↳ Get All Users
+  GET http://cinemaabyss.example.com/api/users [200 OK, 700B, 18ms]
+  ✓  Status code is 200
+  ✓  Response is an array
+
+↳ Create User
+  POST http://cinemaabyss.example.com/api/users [200 OK, 511B, 25ms]
+  1. Status code is 201
+  ✓  Response has id
+
+↳ Get User by ID
+  GET http://cinemaabyss.example.com/api/users?id=5 [200 OK, 511B, 17ms]
+  ✓  Status code is 200
+  ✓  User ID matches
+
+↳ Get All Movies
+  GET http://cinemaabyss.example.com/api/movies [200 OK, 2.08kB, 32ms]
+  ✓  Status code is 200
+  ✓  Response is an array
+
+↳ Create Movie
+  POST http://cinemaabyss.example.com/api/movies [200 OK, 579B, 38ms]
+  2. Status code is 201
+  ✓  Response has id
+
+↳ Get Movie by ID
+  GET http://cinemaabyss.example.com/api/movies?id=8 [200 OK, 579B, 14ms]
+  ✓  Status code is 200
+  ✓  Movie ID matches
+
+↳ Create Payment
+  POST http://cinemaabyss.example.com/api/payments [200 OK, 525B, 22ms]
+  3. Status code is 201
+  ✓  Response has id
+
+↳ Get Payment by ID
+  GET http://cinemaabyss.example.com/api/payments?id=5 [200 OK, 522B, 16ms]
+  ✓  Status code is 200
+  ✓  Payment ID matches
+
+↳ Create Subscription
+  POST http://cinemaabyss.example.com/api/subscriptions [200 OK, 569B, 18ms]
+  4. Status code is 201
+  ✓  Response has id
+
+↳ Get Subscription by ID
+  GET http://cinemaabyss.example.com/api/subscriptions?id=5 [200 OK, 569B, 15ms]
+  ✓  Status code is 200
+  ✓  Subscription ID matches
+
+❏ Movies Microservice
+↳ Health Check
+  GET http://cinemaabyss.example.com/api/movies/health [200 OK, 455B, 13ms]
+  ✓  Status code is 200
+  ✓  Status is true
+
+↳ Get All Movies
+  GET http://cinemaabyss.example.com/api/movies [200 OK, 2.22kB, 23ms]
+  ✓  Status code is 200
+  ✓  Response is an array
+
+↳ Create Movie
+  POST http://cinemaabyss.example.com/api/movies [200 OK, 617B, 23ms]
+  5. Status code is 201
+  ✓  Response has id
+
+↳ Get Movie by ID
+  GET http://cinemaabyss.example.com/api/movies?id=9 [200 OK, 616B, 26ms]
+  ✓  Status code is 200
+  ✓  Movie ID matches
+
+❏ Events Microservice
+↳ Health Check
+  GET http://cinemaabyss.example.com/api/events/health [200 OK, 597B, 27ms]
+  ✓  Status code is 200
+  ✓  Status is true
+
+↳ Create Movie Event
+  POST http://cinemaabyss.example.com/api/events/movie [201 Created, 759B, 217ms]
+  ✓  Status code is 201
+  ✓  Response has status success
+
+↳ Create User Event
+  POST http://cinemaabyss.example.com/api/events/user [201 Created, 699B, 16ms]
+  ✓  Status code is 201
+  ✓  Response has status success
+
+↳ Create Payment Event
+  POST http://cinemaabyss.example.com/api/events/payment [201 Created, 740B, 13ms]
+  ✓  Status code is 201
+  ✓  Response has status success
+
+❏ Proxy Service
+↳ Health Check
+  GET http://cinemaabyss.example.com/health [200 OK, 506B, 6ms]
+  ✓  Status code is 200
+
+↳ Get All Movies via Proxy
+  GET http://cinemaabyss.example.com/api/movies [200 OK, 2.4kB, 13ms]
+  ✓  Status code is 200
+  ✓  Response is an array
+
+↳ Get All Users via Proxy
+  GET http://cinemaabyss.example.com/api/users [200 OK, 774B, 14ms]
+  ✓  Status code is 200
+  ✓  Response is an array
+
+┌─────────────────────────┬───────────────────┬──────────────────┐
+│                         │          executed │           failed │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│              iterations │                 1 │                0 │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│                requests │                22 │                0 │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│            test-scripts │                22 │                0 │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│      prerequest-scripts │                 0 │                0 │
+├─────────────────────────┼───────────────────┼──────────────────┤
+│              assertions │                42 │                5 │
+├─────────────────────────┴───────────────────┴──────────────────┤
+│ total run duration: 3.2s                                       │
+├────────────────────────────────────────────────────────────────┤
+│ total data received: 8.29kB (approx)                           │
+├────────────────────────────────────────────────────────────────┤
+│ average response time: 29ms [min: 6ms, max: 217ms, s.d.: 41ms] │
+└────────────────────────────────────────────────────────────────┘
+
+  #  failure                           detail                                                                                                                               
+                                                                                                                                                                            
+ 1.  AssertionError                    Status code is 201                                                                                                                   
+                                       expected response to have status code 201 but got 200                                                                                
+                                       at assertion:0 in test-script                                                                                                        
+                                       inside "Monolith Service / Create User"                                                                                              
+                                                                                                                                                                            
+ 2.  AssertionError                    Status code is 201                                                                                                                   
+                                       expected response to have status code 201 but got 200                                                                                
+                                       at assertion:0 in test-script                                                                                                        
+                                       inside "Monolith Service / Create Movie"                                                                                             
+                                                                                                                                                                            
+ 3.  AssertionError                    Status code is 201                                                                                                                   
+                                       expected response to have status code 201 but got 200                                                                                
+                                       at assertion:0 in test-script                                                                                                        
+                                       inside "Monolith Service / Create Payment"                                                                                           
+                                                                                                                                                                            
+ 4.  AssertionError                    Status code is 201                                                                                                                   
+                                       expected response to have status code 201 but got 200                                                                                
+                                       at assertion:0 in test-script                                                                                                        
+                                       inside "Monolith Service / Create Subscription"                                                                                      
+                                                                                                                                                                            
+ 5.  AssertionError                    Status code is 201                                                                                                                   
+                                       expected response to have status code 201 but got 200                                                                                
+                                       at assertion:0 in test-script                                                                                                        
+                                       inside "Movies Microservice / Create Movie"                                                                                          
+Newman run completed!
+Total requests: 22
+Failed requests: 0
+Total assertions: 42
+Failed assertions: 5
+(.venv) polinavasileva@MacBook-Pro-Polina postman % date
+Mon Mar 16 08:39:44 MSK 2026
+(.venv) polinavasileva@MacBook-Pro-Polina postman % 
+
+
+
+
+
